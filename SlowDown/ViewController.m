@@ -156,14 +156,21 @@ typedef NS_ENUM(NSInteger, ExportResult) {
                      toDuration:newDuration];
 
     AVMutableVideoComposition *videoComposition = nil;
-    // 最大120fpsとする
-    CMTime minFrameDuration = CMTimeMake(5, 600);   // 1/120
+    // 最大フレームレートは長辺が1280の場合は120fpsに、それ以外は60fpsとする。
+    // iPhone 5s w/iOS 7.0.4のAssetsLibraryでの検証による。
+    // 60fps以上の書き出しはスローモーション撮影が出来る1280x720（これ未満でも出来るかもしれないが未検証）でしか出来ない。
+    // 1280x720だと120fps以上でも書き出せるが、使い勝手を良くする為に120fpsに制限する。
+    // それ以外を60fpsに制限するのは、1920x1080で60fpsを超えると保存出来ない為。
+    CMTime minFrameDuration = ({
+        CGSize size = videoAssetTrack.naturalSize;
+        CMTimeMake((MAX(size.width, size.height) == 1280.0 ? 5 : 10), 600);
+    });
     float frameRate = videoAssetTrack.nominalFrameRate;
     frameRate *= self.rateSlider.value;
     CMTime outputFrameDuration = CMTimeMakeWithSeconds(1.0 / frameRate, timescale);
     if (CMTIME_COMPARE_INLINE(outputFrameDuration, <, minFrameDuration)) {
         outputFrameDuration = minFrameDuration;
-        // フレームレートを120fps上限とするためのインストラクション・ビデオコンポジション作成。
+        // フレームレートを上限値に抑えるためのインストラクション・ビデオコンポジション作成。
         // （不透明にしてオリエンテーションをオリジナルに合わせる）
         AVMutableVideoCompositionLayerInstruction *instruction =
         [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:videoTrack];
