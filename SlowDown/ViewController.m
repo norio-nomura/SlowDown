@@ -131,6 +131,19 @@ typedef NS_ENUM(NSInteger, ExportResult) {
 }
 
 - (IBAction)export:(id)sender {
+    __block UIBackgroundTaskIdentifier backgroundTaskIdentifier =
+    [[UIApplication sharedApplication]
+     beginBackgroundTaskWithName:@"exportSession"
+     expirationHandler:^{
+         UIApplication *application = [UIApplication sharedApplication];
+         [application endBackgroundTask:backgroundTaskIdentifier];
+         backgroundTaskIdentifier = UIBackgroundTaskInvalid;
+         
+         UILocalNotification *note = [[UILocalNotification alloc]init];
+         note.alertBody = NSLocalizedString(@"Failed to exporting by background time expired!", @"Fail on expirationHandler");
+         [application presentLocalNotificationNow:note];
+     }];
+    
     // アセットからトラックを取得
     AVAssetTrack *videoAssetTrack = [self.asset tracksWithMediaType:AVMediaTypeVideo][0];
 
@@ -144,24 +157,33 @@ typedef NS_ENUM(NSInteger, ExportResult) {
     
     // timescaleを合わせるため、CMTime -> seconds -> CMTime とする。
     CMTimeScale timescale = videoAssetTrack.naturalTimeScale;
-    CMTime duration = self.asset.duration;
-    Float64 seconds = CMTimeGetSeconds(duration);
-    Float64 newSeconds = seconds / self.rateSlider.value;
-    CMTime newDuration = CMTimeMakeWithSeconds(newSeconds, timescale);
+    CMTime newDuration = ({
+        CMTime duration = self.asset.duration;
+        Float64 seconds = CMTimeGetSeconds(duration);
+        Float64 newSeconds = seconds / self.rateSlider.value;
+        CMTimeMakeWithSeconds(newSeconds, timescale);
+    });
     
     // 再生レートを指定
     [composition scaleTimeRange:CMTimeRangeMake(kCMTimeZero, self.asset.duration)
                      toDuration:newDuration];
 
     AVMutableVideoComposition *videoComposition = nil;
-    // 最大120fpsとする
-    CMTime minFrameDuration = CMTimeMake(5, 600);   // 1/120
+    // 最大フレームレートは長辺が1280の場合は120fpsに、それ以外は60fpsとする。
+    // iPhone 5s w/iOS 7.0.4のAssetsLibraryでの検証による。
+    // 60fps以上の書き出しはスローモーション撮影が出来る1280x720（これ未満でも出来るかもしれないが未検証）でしか出来ない。
+    // 1280x720だと120fps以上でも書き出せるが、使い勝手を良くする為に120fpsに制限する。
+    // それ以外を60fpsに制限するのは、1920x1080で60fpsを超えると保存出来ない為。
+    CMTime minFrameDuration = ({
+        CGSize size = videoAssetTrack.naturalSize;
+        CMTimeMake((MAX(size.width, size.height) == 1280.0 ? 5 : 10), 600);
+    });
     float frameRate = videoAssetTrack.nominalFrameRate;
     frameRate *= self.rateSlider.value;
     CMTime outputFrameDuration = CMTimeMakeWithSeconds(1.0 / frameRate, timescale);
     if (CMTIME_COMPARE_INLINE(outputFrameDuration, <, minFrameDuration)) {
         outputFrameDuration = minFrameDuration;
-        // フレームレートを120fps上限とするためのインストラクション・ビデオコンポジション作成。
+        // フレームレートを上限値に抑えるためのインストラクション・ビデオコンポジション作成。
         // （不透明にしてオリエンテーションをオリジナルに合わせる）
         AVMutableVideoCompositionLayerInstruction *instruction =
         [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:videoTrack];
@@ -194,7 +216,8 @@ typedef NS_ENUM(NSInteger, ExportResult) {
     self.exportSession =
     [AVAssetExportSession exportSessionWithAsset:composition
                                       presetName:AVAssetExportPresetHighestQuality];
-//                                      presetName:AVAssetExportPresetPassthrough]; // パススルーは音が使えない。
+// パススルーで作成した動画をInstagram 4.2.7で使うと音がおかしくなる。
+//                                      presetName:AVAssetExportPresetPassthrough];
     self.exportSession.audioTimePitchAlgorithm = self.audioTimePitchAlgorithm;
     /* AVAudioTimePitchAlgorithmVarispeed  / ピッチ変わる
      * AVAudioTimePitchAlgorithmSpectral   / ピッチ維持、ノイズも増幅される
@@ -218,19 +241,28 @@ typedef NS_ENUM(NSInteger, ExportResult) {
         NSLog(@"エクスポート処理から戻りました。url:%@", weakSession.outputURL);
 
         if (weakSession.status == AVAssetExportSessionStatusCompleted) {
-            // カメラロールへの書き込み。
-            [originalAsset writeModifiedVideoAtPathToSavedPhotosAlbum:weakSession.outputURL
-                                                      completionBlock:^(NSURL *assetURL,
-                                                                        NSError *error) {
-                                                          if (error) {
-                                                              [self showAlertForResult:ExportResultFailure];
-                                                          } else {
-                                                              [self showAlertForResult:ExportResultSuccess];
-                                                          }
-                                                      }];
+            AVURLAsset *outputAsset = [AVURLAsset assetWithURL:weakSession.outputURL];
+            if (outputAsset.compatibleWithSavedPhotosAlbum) {
+                // カメラロールへの書き込み。
+                [originalAsset writeModifiedVideoAtPathToSavedPhotosAlbum:weakSession.outputURL
+                                                          completionBlock:^(NSURL *assetURL,
+                                                                            NSError *error) {
+                                                              [[UIApplication sharedApplication]endBackgroundTask:backgroundTaskIdentifier];
+                                                              if (error) {
+                                                                  [self showAlertForResult:ExportResultFailure];
+                                                              } else {
+                                                                  [self showAlertForResult:ExportResultSuccess];
+                                                              }
+                                                          }];
+            } else {
+                [[UIApplication sharedApplication]endBackgroundTask:backgroundTaskIdentifier];
+                [self showAlertForResult:ExportResultFailure];
+            }
         } else if (weakSession.status == AVAssetExportSessionStatusCancelled) {
+            [[UIApplication sharedApplication]endBackgroundTask:backgroundTaskIdentifier];
             [self showAlertForResult:ExportResultCancelled];
         } else {
+            [[UIApplication sharedApplication]endBackgroundTask:backgroundTaskIdentifier];
             [self showAlertForResult:ExportResultFailure];
         }
         self.status = StatusNormal;
@@ -333,44 +365,46 @@ typedef NS_ENUM(NSInteger, ExportResult) {
 
 - (void)updateUI
 {
-    self.playbackView.hidden = YES;
-    self.progressBar.hidden = YES;
-    self.chooseButton.enabled = NO;
-    self.playButton.enabled = NO;
-    self.exportButton.enabled = NO;
-    self.rateLabel.enabled = NO;
-    self.rateSlider.enabled = NO;
-
-    switch (self.status) {
-        case StatusNormal:
-            self.chooseButton.enabled = YES;
-            if (self.asset) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.playbackView.hidden = YES;
+        self.progressBar.hidden = YES;
+        self.chooseButton.enabled = NO;
+        self.playButton.enabled = NO;
+        self.exportButton.enabled = NO;
+        self.rateLabel.enabled = NO;
+        self.rateSlider.enabled = NO;
+        
+        switch (self.status) {
+            case StatusNormal:
+                self.chooseButton.enabled = YES;
+                if (self.asset) {
+                    self.playbackView.hidden = NO;
+                    self.progressBar.hidden = NO;
+                    self.playButton.enabled = self.asset.isPlayable;
+                    self.exportButton.enabled = self.asset.isComposable;
+                    self.rateLabel.enabled = self.asset.isPlayable;
+                    self.rateSlider.enabled = self.asset.isPlayable;
+                }
+                break;
+            case StatusPlaying:
+                self.chooseButton.enabled = YES;
+                if (self.asset) {
+                    self.playbackView.hidden = NO;
+                    self.progressBar.hidden = NO;
+                    self.playButton.enabled = self.asset.isPlayable;
+                    self.exportButton.enabled = NO;
+                    self.rateLabel.enabled = self.asset.isPlayable;
+                    self.rateSlider.enabled = self.asset.isPlayable;
+                }
+                break;
+            case StatusExporting:
                 self.playbackView.hidden = NO;
                 self.progressBar.hidden = NO;
-                self.playButton.enabled = self.asset.isPlayable;
-                self.exportButton.enabled = self.asset.isComposable;
-                self.rateLabel.enabled = self.asset.isPlayable;
-                self.rateSlider.enabled = self.asset.isPlayable;
-            }
-            break;
-        case StatusPlaying:
-            self.chooseButton.enabled = YES;
-            if (self.asset) {
-                self.playbackView.hidden = NO;
-                self.progressBar.hidden = NO;
-                self.playButton.enabled = self.asset.isPlayable;
-                self.exportButton.enabled = NO;
-                self.rateLabel.enabled = self.asset.isPlayable;
-                self.rateSlider.enabled = self.asset.isPlayable;
-            }
-            break;
-        case StatusExporting:
-            self.playbackView.hidden = NO;
-            self.progressBar.hidden = NO;
-            break;
-        default:
-            break;
-    }
+                break;
+            default:
+                break;
+        }
+    });
 }
 
 - (void)showAlertForResult:(ExportResult)result
@@ -390,15 +424,24 @@ typedef NS_ENUM(NSInteger, ExportResult) {
             break;
     }
 
-    dispatch_async(dispatch_get_main_queue(),
-                   ^{
-                       UIAlertView *alert = [[UIAlertView alloc] initWithTitle:title
-                                                                       message:nil
-                                                                      delegate:nil
-                                                             cancelButtonTitle:@"OK"
-                                                             otherButtonTitles:nil];
-                       [alert show];
-                       self.progressBar.progress = 0;
-                   });
+    UIApplication *application = [UIApplication sharedApplication];
+    if (application.applicationState == UIApplicationStateBackground) {
+        UILocalNotification *note = [[UILocalNotification alloc]init];
+        note.alertBody = title;
+        [application presentLocalNotificationNow:note];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.progressBar.progress = 0;
+        });
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:title
+                                                            message:nil
+                                                           delegate:nil
+                                                  cancelButtonTitle:@"OK"
+                                                  otherButtonTitles:nil];
+            [alert show];
+            self.progressBar.progress = 0;
+        });
+    }
 }
 @end
