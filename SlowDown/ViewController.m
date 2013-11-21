@@ -144,10 +144,12 @@ typedef NS_ENUM(NSInteger, ExportResult) {
     
     // timescaleを合わせるため、CMTime -> seconds -> CMTime とする。
     CMTimeScale timescale = videoAssetTrack.naturalTimeScale;
-    CMTime duration = self.asset.duration;
-    Float64 seconds = CMTimeGetSeconds(duration);
-    Float64 newSeconds = seconds / self.rateSlider.value;
-    CMTime newDuration = CMTimeMakeWithSeconds(newSeconds, timescale);
+    CMTime newDuration = ({
+        CMTime duration = self.asset.duration;
+        Float64 seconds = CMTimeGetSeconds(duration);
+        Float64 newSeconds = seconds / self.rateSlider.value;
+        CMTimeMakeWithSeconds(newSeconds, timescale);
+    });
     
     // 再生レートを指定
     [composition scaleTimeRange:CMTimeRangeMake(kCMTimeZero, self.asset.duration)
