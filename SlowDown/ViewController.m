@@ -194,7 +194,8 @@ typedef NS_ENUM(NSInteger, ExportResult) {
     self.exportSession =
     [AVAssetExportSession exportSessionWithAsset:composition
                                       presetName:AVAssetExportPresetHighestQuality];
-//                                      presetName:AVAssetExportPresetPassthrough]; // パススルーは音が使えない。
+// パススルーで作成した動画をInstagram 4.2.7で使うと音がおかしくなる。
+//                                      presetName:AVAssetExportPresetPassthrough];
     self.exportSession.audioTimePitchAlgorithm = self.audioTimePitchAlgorithm;
     /* AVAudioTimePitchAlgorithmVarispeed  / ピッチ変わる
      * AVAudioTimePitchAlgorithmSpectral   / ピッチ維持、ノイズも増幅される
