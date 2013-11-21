@@ -221,16 +221,21 @@ typedef NS_ENUM(NSInteger, ExportResult) {
         NSLog(@"エクスポート処理から戻りました。url:%@", weakSession.outputURL);
 
         if (weakSession.status == AVAssetExportSessionStatusCompleted) {
-            // カメラロールへの書き込み。
-            [originalAsset writeModifiedVideoAtPathToSavedPhotosAlbum:weakSession.outputURL
-                                                      completionBlock:^(NSURL *assetURL,
-                                                                        NSError *error) {
-                                                          if (error) {
-                                                              [self showAlertForResult:ExportResultFailure];
-                                                          } else {
-                                                              [self showAlertForResult:ExportResultSuccess];
-                                                          }
-                                                      }];
+            AVURLAsset *outputAsset = [AVURLAsset assetWithURL:weakSession.outputURL];
+            if (outputAsset.compatibleWithSavedPhotosAlbum) {
+                // カメラロールへの書き込み。
+                [originalAsset writeModifiedVideoAtPathToSavedPhotosAlbum:weakSession.outputURL
+                                                          completionBlock:^(NSURL *assetURL,
+                                                                            NSError *error) {
+                                                              if (error) {
+                                                                  [self showAlertForResult:ExportResultFailure];
+                                                              } else {
+                                                                  [self showAlertForResult:ExportResultSuccess];
+                                                              }
+                                                          }];
+            } else {
+                [self showAlertForResult:ExportResultFailure];
+            }
         } else if (weakSession.status == AVAssetExportSessionStatusCancelled) {
             [self showAlertForResult:ExportResultCancelled];
         } else {
