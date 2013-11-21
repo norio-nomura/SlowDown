@@ -131,6 +131,19 @@ typedef NS_ENUM(NSInteger, ExportResult) {
 }
 
 - (IBAction)export:(id)sender {
+    __block UIBackgroundTaskIdentifier backgroundTaskIdentifier =
+    [[UIApplication sharedApplication]
+     beginBackgroundTaskWithName:@"exportSession"
+     expirationHandler:^{
+         UIApplication *application = [UIApplication sharedApplication];
+         [application endBackgroundTask:backgroundTaskIdentifier];
+         backgroundTaskIdentifier = UIBackgroundTaskInvalid;
+         
+         UILocalNotification *note = [[UILocalNotification alloc]init];
+         note.alertBody = NSLocalizedString(@"Failed to exporting by background time expired!", @"Fail on expirationHandler");
+         [application presentLocalNotificationNow:note];
+     }];
+    
     // アセットからトラックを取得
     AVAssetTrack *videoAssetTrack = [self.asset tracksWithMediaType:AVMediaTypeVideo][0];
 
@@ -234,6 +247,7 @@ typedef NS_ENUM(NSInteger, ExportResult) {
                 [originalAsset writeModifiedVideoAtPathToSavedPhotosAlbum:weakSession.outputURL
                                                           completionBlock:^(NSURL *assetURL,
                                                                             NSError *error) {
+                                                              [[UIApplication sharedApplication]endBackgroundTask:backgroundTaskIdentifier];
                                                               if (error) {
                                                                   [self showAlertForResult:ExportResultFailure];
                                                               } else {
@@ -241,11 +255,14 @@ typedef NS_ENUM(NSInteger, ExportResult) {
                                                               }
                                                           }];
             } else {
+                [[UIApplication sharedApplication]endBackgroundTask:backgroundTaskIdentifier];
                 [self showAlertForResult:ExportResultFailure];
             }
         } else if (weakSession.status == AVAssetExportSessionStatusCancelled) {
+            [[UIApplication sharedApplication]endBackgroundTask:backgroundTaskIdentifier];
             [self showAlertForResult:ExportResultCancelled];
         } else {
+            [[UIApplication sharedApplication]endBackgroundTask:backgroundTaskIdentifier];
             [self showAlertForResult:ExportResultFailure];
         }
         self.status = StatusNormal;
@@ -405,15 +422,24 @@ typedef NS_ENUM(NSInteger, ExportResult) {
             break;
     }
 
-    dispatch_async(dispatch_get_main_queue(),
-                   ^{
-                       UIAlertView *alert = [[UIAlertView alloc] initWithTitle:title
-                                                                       message:nil
-                                                                      delegate:nil
-                                                             cancelButtonTitle:@"OK"
-                                                             otherButtonTitles:nil];
-                       [alert show];
-                       self.progressBar.progress = 0;
-                   });
+    UIApplication *application = [UIApplication sharedApplication];
+    if (application.applicationState == UIApplicationStateBackground) {
+        UILocalNotification *note = [[UILocalNotification alloc]init];
+        note.alertBody = title;
+        [application presentLocalNotificationNow:note];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.progressBar.progress = 0;
+        });
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:title
+                                                            message:nil
+                                                           delegate:nil
+                                                  cancelButtonTitle:@"OK"
+                                                  otherButtonTitles:nil];
+            [alert show];
+            self.progressBar.progress = 0;
+        });
+    }
 }
 @end
