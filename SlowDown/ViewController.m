@@ -365,44 +365,46 @@ typedef NS_ENUM(NSInteger, ExportResult) {
 
 - (void)updateUI
 {
-    self.playbackView.hidden = YES;
-    self.progressBar.hidden = YES;
-    self.chooseButton.enabled = NO;
-    self.playButton.enabled = NO;
-    self.exportButton.enabled = NO;
-    self.rateLabel.enabled = NO;
-    self.rateSlider.enabled = NO;
-
-    switch (self.status) {
-        case StatusNormal:
-            self.chooseButton.enabled = YES;
-            if (self.asset) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.playbackView.hidden = YES;
+        self.progressBar.hidden = YES;
+        self.chooseButton.enabled = NO;
+        self.playButton.enabled = NO;
+        self.exportButton.enabled = NO;
+        self.rateLabel.enabled = NO;
+        self.rateSlider.enabled = NO;
+        
+        switch (self.status) {
+            case StatusNormal:
+                self.chooseButton.enabled = YES;
+                if (self.asset) {
+                    self.playbackView.hidden = NO;
+                    self.progressBar.hidden = NO;
+                    self.playButton.enabled = self.asset.isPlayable;
+                    self.exportButton.enabled = self.asset.isComposable;
+                    self.rateLabel.enabled = self.asset.isPlayable;
+                    self.rateSlider.enabled = self.asset.isPlayable;
+                }
+                break;
+            case StatusPlaying:
+                self.chooseButton.enabled = YES;
+                if (self.asset) {
+                    self.playbackView.hidden = NO;
+                    self.progressBar.hidden = NO;
+                    self.playButton.enabled = self.asset.isPlayable;
+                    self.exportButton.enabled = NO;
+                    self.rateLabel.enabled = self.asset.isPlayable;
+                    self.rateSlider.enabled = self.asset.isPlayable;
+                }
+                break;
+            case StatusExporting:
                 self.playbackView.hidden = NO;
                 self.progressBar.hidden = NO;
-                self.playButton.enabled = self.asset.isPlayable;
-                self.exportButton.enabled = self.asset.isComposable;
-                self.rateLabel.enabled = self.asset.isPlayable;
-                self.rateSlider.enabled = self.asset.isPlayable;
-            }
-            break;
-        case StatusPlaying:
-            self.chooseButton.enabled = YES;
-            if (self.asset) {
-                self.playbackView.hidden = NO;
-                self.progressBar.hidden = NO;
-                self.playButton.enabled = self.asset.isPlayable;
-                self.exportButton.enabled = NO;
-                self.rateLabel.enabled = self.asset.isPlayable;
-                self.rateSlider.enabled = self.asset.isPlayable;
-            }
-            break;
-        case StatusExporting:
-            self.playbackView.hidden = NO;
-            self.progressBar.hidden = NO;
-            break;
-        default:
-            break;
-    }
+                break;
+            default:
+                break;
+        }
+    });
 }
 
 - (void)showAlertForResult:(ExportResult)result
